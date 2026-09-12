@@ -1,0 +1,843 @@
+/* ==================================================
+   DIGITAL TWIN PAGE
+================================================== */
+
+.digital-twin-page {
+    min-height: 100vh;
+    padding: 40px 20px 60px;
+    background:
+      radial-gradient(
+        circle at top left,
+        rgba(34, 197, 94, 0.10),
+        transparent 30%
+      ),
+      radial-gradient(
+        circle at top right,
+        rgba(59, 130, 246, 0.10),
+        transparent 30%
+      ),
+      #f6f9f7;
+    box-sizing: border-box;
+  }
+  
+  /* ==================================================
+     MAIN CARD
+  ================================================== */
+  
+  .digital-twin-card {
+    width: min(1100px, 100%);
+    margin: 0 auto;
+    padding: 42px;
+    background: #ffffff;
+    border: 1px solid #e4ebe7;
+    border-radius: 28px;
+    box-shadow:
+      0 20px 55px rgba(15, 23, 42, 0.08),
+      0 4px 14px rgba(15, 23, 42, 0.04);
+    box-sizing: border-box;
+  }
+  
+  /* ==================================================
+     BRAND
+  ================================================== */
+  
+  .digital-twin-logo {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    margin-bottom: 34px;
+    color: #17251f;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+  }
+  
+  .logo-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 12px;
+    background: linear-gradient(
+      135deg,
+      #16a34a,
+      #22c55e
+    );
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 800;
+    box-shadow:
+      0 8px 18px rgba(34, 197, 94, 0.22);
+  }
+  
+  /* ==================================================
+     HEADER
+  ================================================== */
+  
+  .digital-twin-card > h1 {
+    margin: 6px 0 12px;
+    color: #14231c;
+    font-size: clamp(34px, 5vw, 52px);
+    line-height: 1.08;
+    letter-spacing: -1.8px;
+  }
+  
+  .section-label {
+    margin: 0 0 8px;
+    color: #16a34a;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1.7px;
+    text-transform: uppercase;
+  }
+  
+  .digital-twin-subtitle {
+    max-width: 760px;
+    margin: 0;
+    color: #64736c;
+    font-size: 15px;
+    line-height: 1.7;
+  }
+  
+  /* ==================================================
+     PATIENT HEADER
+  ================================================== */
+  
+  .digital-twin-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    margin-top: 32px;
+    padding: 22px 24px;
+    border: 1px solid #e2ebe5;
+    border-radius: 20px;
+    background: linear-gradient(
+      135deg,
+      #f8fffa,
+      #f5fbf7
+    );
+  }
+  
+  .small-label {
+    display: block;
+    margin-bottom: 6px;
+    color: #7a8881;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+  }
+  
+  .digital-twin-header h2 {
+    margin: 0;
+    color: #1b2b23;
+    font-size: 24px;
+    line-height: 1.2;
+  }
+  
+  .twin-status,
+  .twin-report-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+    padding: 9px 13px;
+    border: 1px solid #bbf7d0;
+    border-radius: 999px;
+    background: #f0fdf4;
+    color: #15803d;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.12);
+  }
+  
+  /* ==================================================
+     SECTIONS
+  ================================================== */
+  
+  .twin-section {
+    margin-top: 34px;
+    padding: 30px;
+    border: 1px solid #e6ece8;
+    border-radius: 24px;
+    background: #ffffff;
+    box-shadow:
+      0 8px 25px rgba(15, 23, 42, 0.035);
+  }
+  
+  .twin-section-header {
+    margin-bottom: 24px;
+  }
+  
+  .twin-section h2 {
+    margin: 4px 0 9px;
+    color: #1b2b23;
+    font-size: 27px;
+    line-height: 1.2;
+    letter-spacing: -0.5px;
+  }
+  
+  /* ==================================================
+     HEALTH SNAPSHOT
+  ================================================== */
+  
+  .twin-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 24px;
+  }
+  
+  .twin-stat {
+    min-height: 105px;
+    padding: 18px;
+    border: 1px solid #e3ebe6;
+    border-radius: 18px;
+    background: #f9fcfa;
+    box-sizing: border-box;
+    transition:
+      transform 0.2s ease,
+      box-shadow 0.2s ease,
+      border-color 0.2s ease;
+  }
+  
+  .twin-stat:hover {
+    transform: translateY(-2px);
+    border-color: #bbf7d0;
+    box-shadow:
+      0 10px 25px rgba(15, 23, 42, 0.06);
+  }
+  
+  .twin-stat span {
+    display: block;
+    margin-bottom: 12px;
+    color: #718078;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  
+  .twin-stat strong {
+    display: block;
+    color: #17251f;
+    font-size: 22px;
+    line-height: 1.2;
+  }
+  
+  .twin-condition {
+    margin-top: 16px;
+    padding: 20px;
+    border-left: 4px solid #f59e0b;
+    border-radius: 14px;
+    background: #fffaf0;
+  }
+  
+  .twin-condition span {
+    display: block;
+    margin-bottom: 7px;
+    color: #a16207;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  
+  .twin-condition p {
+    margin: 0;
+    color: #4b5563;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  
+  /* ==================================================
+     MEDICAL REPORT
+  ================================================== */
+  
+  .twin-medical-report {
+    background:
+      linear-gradient(
+        180deg,
+        #ffffff 0%,
+        #fbfdff 100%
+      );
+  }
+  
+  .twin-medical-report-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 25px;
+  }
+  
+  .twin-report-status {
+    border-color: #bfdbfe;
+    background: #eff6ff;
+    color: #2563eb;
+  }
+  
+  .twin-report-status .status-dot {
+    background: #3b82f6;
+    box-shadow:
+      0 0 0 4px rgba(59, 130, 246, 0.12);
+  }
+  
+  /* ==================================================
+     EMPTY MEDICAL REPORT
+  ================================================== */
+  
+  .twin-report-empty {
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 25px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 20px;
+    background: #f8fafc;
+  }
+  
+  .twin-report-empty-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 58px;
+    height: 58px;
+    flex-shrink: 0;
+    border-radius: 17px;
+    background: #eef2ff;
+    color: #4f46e5;
+    font-size: 13px;
+    font-weight: 800;
+  }
+  
+  .twin-report-empty h3 {
+    margin: 0 0 8px;
+    color: #1e293b;
+    font-size: 18px;
+  }
+  
+  .twin-report-empty p {
+    max-width: 650px;
+    margin: 0 0 17px;
+    color: #64748b;
+    font-size: 14px;
+    line-height: 1.65;
+  }
+  
+  /* ==================================================
+     BUTTONS
+  ================================================== */
+  
+  .digital-twin-report-button,
+  .digital-twin-button {
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 700;
+    transition:
+      transform 0.2s ease,
+      box-shadow 0.2s ease,
+      opacity 0.2s ease;
+  }
+  
+  .digital-twin-report-button {
+    padding: 11px 17px;
+    border-radius: 12px;
+    background: #eefbf2;
+    color: #15803d;
+    border: 1px solid #bbf7d0;
+    font-size: 13px;
+  }
+  
+  .digital-twin-report-button:hover {
+    transform: translateY(-1px);
+    background: #dcfce7;
+  }
+  
+  /* ==================================================
+     ANALYZED REPORT
+  ================================================== */
+  
+  .twin-report-content {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  
+  .twin-report-success {
+    display: flex;
+    align-items: flex-start;
+    gap: 15px;
+    padding: 19px;
+    border: 1px solid #bbf7d0;
+    border-radius: 17px;
+    background: #f0fdf4;
+  }
+  
+  .twin-report-success > span {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: #22c55e;
+    color: #ffffff;
+    font-size: 10px;
+    font-weight: 800;
+  }
+  
+  .twin-report-success strong {
+    display: block;
+    margin-bottom: 4px;
+    color: #166534;
+    font-size: 15px;
+  }
+  
+  .twin-report-success p {
+    margin: 0;
+    color: #4d7c5d;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  
+  /* ==================================================
+     MEDICAL REPORT SECTIONS
+  ================================================== */
+  
+  .twin-report-section {
+    padding: 20px;
+    border: 1px solid #e6ebef;
+    border-radius: 17px;
+    background: #fbfcfd;
+  }
+  
+  .twin-report-section > span {
+    display: block;
+    margin-bottom: 13px;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+  }
+  
+  /* ==================================================
+     MEDICAL LISTS
+  ================================================== */
+  
+  .twin-report-list {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  
+  .twin-report-list li {
+    position: relative;
+    padding: 11px 13px 11px 30px;
+    border-radius: 11px;
+    background: #ffffff;
+    color: #52616a;
+    font-size: 13px;
+    line-height: 1.55;
+    border: 1px solid #edf1f3;
+  }
+  
+  .twin-report-list li::before {
+    content: "";
+    position: absolute;
+    left: 13px;
+    top: 17px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #22c55e;
+  }
+  
+  /* ==================================================
+     MEDICAL MEASUREMENTS
+  ================================================== */
+  
+  .twin-report-values {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  
+  .twin-report-values > div {
+    padding: 16px;
+    border-radius: 14px;
+    border: 1px solid #e6edf0;
+    background: #ffffff;
+  }
+  
+  .twin-report-values small {
+    display: block;
+    margin-bottom: 8px;
+    color: #7b8790;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  
+  .twin-report-values strong {
+    display: block;
+    color: #1e293b;
+    font-size: 17px;
+    line-height: 1.3;
+  }
+  
+  /* ==================================================
+     DIETARY LEARNING
+  ================================================== */
+  
+  .twin-learning-card {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 24px;
+    padding: 24px;
+    border-radius: 20px;
+    background:
+      linear-gradient(
+        135deg,
+        #fff7ed,
+        #fffaf5
+      );
+    border: 1px solid #fed7aa;
+  }
+  
+  .twin-learning-stat {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 20px;
+    border-radius: 16px;
+    background: #ffffff;
+    border: 1px solid #fed7aa;
+    text-align: center;
+  }
+  
+  .twin-learning-stat span {
+    margin-bottom: 10px;
+    color: #9a6b39;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+  }
+  
+  .twin-learning-stat strong {
+    color: #ea580c;
+    font-size: 38px;
+    line-height: 1;
+  }
+  
+  .twin-learning-detail {
+    padding: 4px 0;
+  }
+  
+  .twin-learning-detail > span {
+    display: block;
+    margin-bottom: 9px;
+    color: #c2410c;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  
+  .twin-learning-detail h3 {
+    margin: 0 0 12px;
+    color: #431407;
+    font-size: 21px;
+    line-height: 1.3;
+  }
+  
+  .twin-learning-detail p {
+    margin: 6px 0;
+    color: #6b4f3d;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+  
+  .twin-learning-detail small {
+    display: block;
+    margin-top: 17px;
+    color: #9a6b55;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  
+  /* ==================================================
+     AI HEALTH UNDERSTANDING
+  ================================================== */
+  
+  .twin-ai-insight {
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    padding: 22px;
+    border: 1px solid #ddd6fe;
+    border-radius: 20px;
+    background:
+      linear-gradient(
+        135deg,
+        #faf5ff,
+        #f5f3ff
+      );
+  }
+  
+  .insight-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    border-radius: 15px;
+    background: linear-gradient(
+      135deg,
+      #7c3aed,
+      #a855f7
+    );
+    color: #ffffff;
+    font-size: 11px;
+    font-weight: 800;
+    box-shadow:
+      0 8px 18px rgba(124, 58, 237, 0.20);
+  }
+  
+  .twin-ai-insight p {
+    margin: 2px 0 7px;
+    color: #6d28d9;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 1.2px;
+  }
+  
+  .twin-ai-insight span {
+    display: block;
+    color: #665f76;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  
+  /* ==================================================
+     ERROR MESSAGE
+  ================================================== */
+  
+  .profile-message {
+    margin: 22px 0 0;
+    padding: 13px 16px;
+    border: 1px solid #fecaca;
+    border-radius: 12px;
+    background: #fef2f2;
+    color: #b91c1c;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  
+  /* ==================================================
+     CONTINUE BUTTON
+  ================================================== */
+  
+  .digital-twin-button {
+    display: block;
+    width: 100%;
+    margin-top: 34px;
+    padding: 16px 22px;
+    border-radius: 15px;
+    background: linear-gradient(
+      135deg,
+      #16a34a,
+      #22c55e
+    );
+    color: #ffffff;
+    font-size: 15px;
+    box-shadow:
+      0 10px 24px rgba(34, 197, 94, 0.22);
+  }
+  
+  .digital-twin-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow:
+      0 14px 30px rgba(34, 197, 94, 0.28);
+  }
+  
+  .digital-twin-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    box-shadow: none;
+  }
+  
+  /* ==================================================
+     RESPONSIVE — TABLET
+  ================================================== */
+  
+  @media (max-width: 850px) {
+    .digital-twin-card {
+      padding: 30px;
+    }
+  
+    .twin-stats {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  
+    .twin-report-values {
+      grid-template-columns: repeat(2, 1fr);
+    }
+  
+    .twin-learning-card {
+      grid-template-columns: 150px 1fr;
+    }
+  }
+  
+  /* ==================================================
+     RESPONSIVE — MOBILE
+  ================================================== */
+  
+  @media (max-width: 600px) {
+    .digital-twin-page {
+      padding: 18px 12px 35px;
+    }
+  
+    .digital-twin-card {
+      padding: 22px 16px;
+      border-radius: 22px;
+    }
+  
+    .digital-twin-logo {
+      margin-bottom: 25px;
+    }
+  
+    .digital-twin-card > h1 {
+      font-size: 34px;
+      letter-spacing: -1.2px;
+    }
+  
+    .digital-twin-subtitle {
+      font-size: 14px;
+      line-height: 1.65;
+    }
+  
+    .digital-twin-header {
+      align-items: flex-start;
+      flex-direction: column;
+      padding: 18px;
+    }
+  
+    .twin-status {
+      white-space: normal;
+    }
+  
+    .twin-section {
+      margin-top: 22px;
+      padding: 20px 16px;
+      border-radius: 20px;
+    }
+  
+    .twin-section h2 {
+      font-size: 23px;
+    }
+  
+    .twin-stats {
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+  
+    .twin-stat {
+      min-height: 92px;
+      padding: 14px;
+    }
+  
+    .twin-stat strong {
+      font-size: 19px;
+    }
+  
+    .twin-medical-report-header {
+      flex-direction: column;
+    }
+  
+    .twin-report-empty {
+      align-items: flex-start;
+      flex-direction: column;
+      padding: 19px;
+    }
+  
+    .twin-report-values {
+      grid-template-columns: 1fr 1fr;
+    }
+  
+    .twin-learning-card {
+      grid-template-columns: 1fr;
+      gap: 16px;
+      padding: 17px;
+    }
+  
+    .twin-learning-stat {
+      padding: 18px;
+    }
+  
+    .twin-learning-stat strong {
+      font-size: 32px;
+    }
+  
+    .twin-ai-insight {
+      gap: 13px;
+      padding: 17px;
+    }
+  
+    .insight-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 13px;
+    }
+  
+    .twin-ai-insight span {
+      font-size: 12.5px;
+    }
+  
+    .digital-twin-report-button {
+      width: 100%;
+    }
+  
+    .digital-twin-button {
+      margin-top: 25px;
+    }
+  }
+  
+  /* ==================================================
+     RESPONSIVE — SMALL PHONES
+  ================================================== */
+  
+  @media (max-width: 390px) {
+    .digital-twin-page {
+      padding: 12px 8px 28px;
+    }
+  
+    .digital-twin-card {
+      padding: 18px 13px;
+    }
+  
+    .digital-twin-card > h1 {
+      font-size: 30px;
+    }
+  
+    .twin-stats,
+    .twin-report-values {
+      grid-template-columns: 1fr;
+    }
+  
+    .twin-stat {
+      min-height: auto;
+    }
+  }

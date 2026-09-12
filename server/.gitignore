@@ -1,12 +1,18 @@
 # Dependencies
 node_modules/
 
-# Environment variables
+# Environment variables / secrets
 .env
-server/.env
+.env.*
+!.env.example
 
 # Uploaded files
-server/uploads/
+uploads/
 
 # Build files
 dist/
+
+# Logs
+logs/
+*.log
+npm-debug.log*

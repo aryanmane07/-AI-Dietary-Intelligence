@@ -26,3 +26,16 @@ textarea,
 select {
   font-family: inherit;
 }
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}

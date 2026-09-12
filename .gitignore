@@ -10,3 +10,9 @@ server/uploads/
 
 # Build files
 dist/
+# Python virtual environment
+server/food-ai/bin/
+server/food-ai/include/
+server/food-ai/lib/
+server/food-ai/share/
+server/food-ai/pyvenv.cfg
