@@ -1,6 +1,6 @@
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ObjectId } = require("mongodb");
+const db = require("./db/connection");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
@@ -128,82 +128,28 @@ const upload = multer({
 });
 
 // ==================================================
-// MONGODB CONNECTION
+// MYSQL DATABASE CONNECTION
 // ==================================================
-
-const client = new MongoClient(
-  process.env.MONGODB_URI
-);
 
 async function connectToDatabase() {
   try {
-    await client.connect();
-
-    await client
-      .db("admin")
-      .command({
-        ping: 1,
-      });
+    await db.query("SELECT 1");
 
     console.log(
-      "MongoDB connected successfully!"
+      "MySQL connected successfully!"
     );
 
-    const database = getDatabase();
-
-    await database
-      .collection("sessions")
-      .createIndex(
-        {
-          expiresAt: 1,
-        },
-        {
-          expireAfterSeconds: 0,
-        }
-      );
-
-    await database
-      .collection("users")
-      .createIndex(
-        {
-          email: 1,
-        },
-        {
-          unique: true,
-        }
-      );
-
-    await database
-      .collection("mealPlans")
-      .createIndex({
-        userId: 1,
-        updatedAt: -1,
-      });
-
-    await database
-      .collection("mealPlans")
-      .createIndex({
-        userId: 1,
-        createdAt: -1,
-      });
-
     console.log(
-      "Authentication and meal-plan indexes ready."
+      "Authentication and meal-plan database ready."
     );
   } catch (error) {
     console.error(
-      "MongoDB connection error:",
+      "MySQL connection error:",
       error
     );
+
+    throw error;
   }
-}
-
-// ==================================================
-// GET DATABASE
-// ==================================================
-
-function getDatabase() {
-  return client.db("dietaryAI");
 }
 
 // ==================================================
@@ -224,6 +170,23 @@ function isValidEmail(email) {
 
 function normalizeUserId(userId) {
   return String(userId || "").trim();
+}
+
+// ==================================================
+// JSON DATABASE HELPER
+// ==================================================
+
+// MySQL JSON columns must receive valid JSON.
+// This helper safely stores strings, arrays, and objects.
+function toJsonString(value) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return null;
+  }
+
+  return JSON.stringify(value);
 }
 
 // ==================================================
@@ -344,20 +307,19 @@ async function requireAuth(
         sessionToken
       );
 
-    const sessions =
-      getDatabase().collection(
-        "sessions"
+    const [rows] =
+      await db.query(
+        `
+        SELECT id, user_id, expires_at
+        FROM sessions
+        WHERE token_hash = ?
+          AND expires_at > NOW()
+        LIMIT 1
+        `,
+        [sessionTokenHash]
       );
 
-    const session =
-      await sessions.findOne({
-        tokenHash:
-          sessionTokenHash,
-
-        expiresAt: {
-          $gt: new Date(),
-        },
-      });
+    const session = rows[0];
 
     if (!session) {
       res.clearCookie(
@@ -373,11 +335,11 @@ async function requireAuth(
 
     req.authUserId =
       normalizeUserId(
-        session.userId
+        session.user_id
       );
 
     req.authSessionId =
-      session._id;
+      session.id;
 
     next();
   } catch (error) {
@@ -408,22 +370,33 @@ function hashResetToken(token) {
 // PERSONALIZATION DATA
 // ==================================================
 
+function parseJsonValue(
+  value,
+  fallback = null
+) {
+  if (
+    value === null ||
+    value === undefined
+  ) {
+    return fallback;
+  }
+
+  if (
+    typeof value === "object"
+  ) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 async function getPersonalizationData(
   userId
 ) {
-  const database =
-    getDatabase();
-
-  const digitalTwins =
-    database.collection(
-      "digitalTwins"
-    );
-
-  const foodGenomes =
-    database.collection(
-      "foodGenomes"
-    );
-
   const cleanUserId =
     normalizeUserId(userId);
 
@@ -435,21 +408,163 @@ async function getPersonalizationData(
   }
 
   const [
-    digitalTwin,
-    foodGenome,
+    digitalTwinRows,
+    foodGenomeRows,
   ] = await Promise.all([
-    digitalTwins.findOne({
-      userId: cleanUserId,
-    }),
+    db.query(
+      `
+      SELECT *
+      FROM digital_twins
+      WHERE user_id = ?
+      LIMIT 1
+      `,
+      [cleanUserId]
+    ),
 
-    foodGenomes.findOne({
-      userId: cleanUserId,
-    }),
+    db.query(
+      `
+      SELECT *
+      FROM food_genomes
+      WHERE user_id = ?
+      LIMIT 1
+      `,
+      [cleanUserId]
+    ),
   ]);
 
+  const digitalTwin =
+    digitalTwinRows[0][0];
+
+  const foodGenome =
+    foodGenomeRows[0][0];
+
   return {
-    digitalTwin,
-    foodGenome,
+    digitalTwin: digitalTwin
+      ? {
+          userId:
+            digitalTwin.user_id,
+
+          patientName:
+            digitalTwin.patient_name ||
+            "",
+
+          healthProfile:
+            parseJsonValue(
+              digitalTwin.health_profile,
+              null
+            ),
+
+          medicalReportData:
+            parseJsonValue(
+              digitalTwin.medical_report_data,
+              null
+            ),
+
+          medicalReportAnalyzed:
+            Boolean(
+              digitalTwin.medical_report_analyzed
+            ),
+
+          medicalReportUpdatedAt:
+            digitalTwin.medical_report_updated_at ||
+            null,
+
+          dietaryFeedback:
+            parseJsonValue(
+              digitalTwin.dietary_feedback,
+              []
+            ),
+
+          feedbackCount:
+            digitalTwin.feedback_count || 0,
+
+          lastDietaryFeedback:
+            parseJsonValue(
+              digitalTwin.last_dietary_feedback,
+              null
+            ),
+
+          createdAt:
+            digitalTwin.created_at,
+
+          updatedAt:
+            digitalTwin.updated_at,
+        }
+      : null,
+
+    foodGenome: foodGenome
+      ? {
+          userId:
+            foodGenome.user_id,
+
+          patientName:
+            foodGenome.patient_name ||
+            "",
+
+          totalFeedback:
+            foodGenome.total_feedback || 0,
+
+          lovedFoods:
+            parseJsonValue(
+              foodGenome.loved_foods,
+              []
+            ),
+
+          likedFoods:
+            parseJsonValue(
+              foodGenome.liked_foods,
+              []
+            ),
+
+          neutralFoods:
+            parseJsonValue(
+              foodGenome.neutral_foods,
+              []
+            ),
+
+          dislikedFoods:
+            parseJsonValue(
+              foodGenome.disliked_foods,
+              []
+            ),
+
+          reactions:
+            parseJsonValue(
+              foodGenome.reactions,
+              []
+            ),
+
+          foods:
+            parseJsonValue(
+              foodGenome.foods,
+              []
+            ),
+
+          mealPlanFeedback:
+            parseJsonValue(
+              foodGenome.meal_plan_feedback,
+              []
+            ),
+
+          lastFeedback:
+            parseJsonValue(
+              foodGenome.last_feedback,
+              null
+            ),
+
+          lastMealPlanFeedback:
+            parseJsonValue(
+              foodGenome.last_meal_plan_feedback,
+              null
+            ),
+
+          createdAt:
+            foodGenome.created_at,
+
+          updatedAt:
+            foodGenome.updated_at,
+        }
+      : null,
   };
 }
 
@@ -467,17 +582,95 @@ async function getAuthenticatedPatient(
     return null;
   }
 
-  const database =
-    getDatabase();
-
-  const patients =
-    database.collection(
-      "patients"
+  const [rows] =
+    await db.query(
+      `
+      SELECT *
+      FROM patients
+      WHERE user_id = ?
+      LIMIT 1
+      `,
+      [cleanUserId]
     );
 
-  return await patients.findOne({
-    userId: cleanUserId,
-  });
+  const patient =
+    rows[0] || null;
+
+  if (!patient) {
+    return null;
+  }
+
+  return {
+    userId:
+      patient.user_id,
+
+    patientId:
+      patient.id,
+
+    name:
+      patient.name,
+
+    age:
+      patient.age,
+
+    gender:
+      patient.gender || "",
+
+    height:
+      patient.height,
+
+    weight:
+      patient.weight,
+
+    bloodPressure:
+      patient.blood_pressure,
+
+    bloodSugar:
+      patient.blood_sugar,
+
+    diseases:
+      parseJsonValue(
+        patient.diseases,
+        []
+      ),
+
+    allergies:
+      parseJsonValue(
+        patient.allergies,
+        []
+      ),
+
+    foodPreferences:
+      parseJsonValue(
+        patient.food_preferences,
+        []
+      ),
+
+    medicalReportId:
+      patient.medical_report_id ||
+      null,
+
+    medicalReportAnalyzed:
+      Boolean(
+        patient.medical_report_analyzed
+      ),
+
+    medicalReportUpdatedAt:
+      patient.medical_report_updated_at ||
+      null,
+
+    medicalReportData:
+      parseJsonValue(
+        patient.medical_report_data,
+        null
+      ),
+
+    createdAt:
+      patient.created_at,
+
+    updatedAt:
+      patient.updated_at,
+  };
 }
 
 // ==================================================
@@ -488,51 +681,93 @@ async function getPreviousMealPlans(
   userId,
   excludeMealPlanId = null
 ) {
-  const database =
-    getDatabase();
-
-  const mealPlans =
-    database.collection(
-      "mealPlans"
-    );
-
   const cleanUserId =
     normalizeUserId(userId);
 
-  const query = {
-    userId: cleanUserId,
-  };
+  let query = `
+    SELECT
+      id,
+      user_id,
+      patient_name,
+      meal_plan,
+      goal,
+      context,
+      customization,
+      created_at,
+      updated_at,
+      latest_feedback
+    FROM meal_plans
+    WHERE user_id = ?
+  `;
 
-  if (
-    excludeMealPlanId &&
-    ObjectId.isValid(
+  const params = [
+    cleanUserId,
+  ];
+
+  if (excludeMealPlanId) {
+    query += `
+      AND id <> ?
+    `;
+
+    params.push(
       excludeMealPlanId
-    )
-  ) {
-    query._id = {
-      $ne: new ObjectId(
-        excludeMealPlanId
-      ),
-    };
+    );
   }
 
-  return await mealPlans
-    .find(query, {
-      projection: {
-        mealPlan: 1,
-        goal: 1,
-        context: 1,
-        customization: 1,
-        createdAt: 1,
-        updatedAt: 1,
-        latestFeedback: 1,
-      },
+  query += `
+    ORDER BY updated_at DESC
+    LIMIT 8
+  `;
+
+  const [rows] =
+    await db.query(
+      query,
+      params
+    );
+
+  return rows.map(
+    (plan) => ({
+      id:
+        plan.id,
+
+      userId:
+        plan.user_id,
+
+      patientName:
+        plan.patient_name ||
+        "",
+
+      mealPlan:
+        parseJsonValue(
+          plan.meal_plan,
+          ""
+        ),
+
+      goal:
+        plan.goal ||
+        "",
+
+      context:
+        plan.context ||
+        "",
+
+      customization:
+        plan.customization ||
+        "",
+
+      createdAt:
+        plan.created_at,
+
+      updatedAt:
+        plan.updated_at,
+
+      latestFeedback:
+        parseJsonValue(
+          plan.latest_feedback,
+          null
+        ),
     })
-    .sort({
-      updatedAt: -1,
-    })
-    .limit(8)
-    .toArray();
+  );
 }
 
 // ==================================================
@@ -798,14 +1033,6 @@ app.post(
   "/signup",
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const users =
-        database.collection(
-          "users"
-        );
-
       const email =
         normalizeEmail(
           req.body.email
@@ -823,9 +1050,7 @@ app.post(
         });
       }
 
-      if (
-        !isValidEmail(email)
-      ) {
+      if (!isValidEmail(email)) {
         return res.status(400).json({
           message:
             "Please enter a valid email address.",
@@ -839,21 +1064,25 @@ app.post(
         });
       }
 
-      if (
-        password.length < 8
-      ) {
+      if (password.length < 8) {
         return res.status(400).json({
           message:
             "Password must be at least 8 characters.",
         });
       }
 
-      const existingUser =
-        await users.findOne({
-          email,
-        });
+      const [existingRows] =
+        await db.query(
+          `
+          SELECT id
+          FROM users
+          WHERE email = ?
+          LIMIT 1
+          `,
+          [email]
+        );
 
-      if (existingUser) {
+      if (existingRows.length > 0) {
         return res.status(409).json({
           message:
             "An account with this email already exists. Please log in.",
@@ -866,27 +1095,34 @@ app.post(
           12
         );
 
-      const now =
-        new Date();
+      const userId =
+        crypto
+          .randomBytes(24)
+          .toString("hex");
 
-      const user = {
-        email,
-        passwordHash,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      const result =
-        await users.insertOne(
-          user
-        );
+      await db.query(
+        `
+        INSERT INTO users (
+          id,
+          email,
+          password_hash,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, NOW(), NOW())
+        `,
+        [
+          userId,
+          email,
+          passwordHash,
+        ]
+      );
 
       res.status(201).json({
         message:
           "Account created successfully.",
 
-        userId:
-          result.insertedId.toString(),
+        userId,
 
         email,
       });
@@ -898,7 +1134,7 @@ app.post(
 
       if (
         error?.code ===
-        11000
+        "ER_DUP_ENTRY"
       ) {
         return res.status(409).json({
           message:
@@ -922,19 +1158,6 @@ app.post(
   "/login",
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const users =
-        database.collection(
-          "users"
-        );
-
-      const sessions =
-        database.collection(
-          "sessions"
-        );
-
       const email =
         normalizeEmail(
           req.body.email
@@ -950,20 +1173,28 @@ app.post(
           req.body.rememberMe
         );
 
-      if (
-        !email ||
-        !password
-      ) {
+      if (!email || !password) {
         return res.status(400).json({
           message:
             "Email and password are required.",
         });
       }
 
-      const user =
-        await users.findOne({
-          email,
-        });
+      const [userRows] =
+        await db.query(
+          `
+          SELECT
+            id,
+            email,
+            password_hash
+          FROM users
+          WHERE email = ?
+          LIMIT 1
+          `,
+          [email]
+        );
+
+      const user = userRows[0];
 
       if (!user) {
         return res.status(401).json({
@@ -975,7 +1206,7 @@ app.post(
       const passwordMatches =
         await bcrypt.compare(
           password,
-          user.passwordHash
+          user.password_hash
         );
 
       if (!passwordMatches) {
@@ -998,15 +1229,8 @@ app.post(
 
       const sessionLifetime =
         rememberMe
-          ? 30 *
-            24 *
-            60 *
-            60 *
-            1000
-          : 24 *
-            60 *
-            60 *
-            1000;
+          ? 30 * 24 * 60 * 60 * 1000
+          : 24 * 60 * 60 * 1000;
 
       const expiresAt =
         new Date(
@@ -1014,35 +1238,46 @@ app.post(
             sessionLifetime
         );
 
-      await sessions.insertOne({
-        userId:
-          user._id.toString(),
+      const sessionId =
+        crypto
+          .randomBytes(24)
+          .toString("hex");
 
-        tokenHash:
+      await db.query(
+        `
+        INSERT INTO sessions (
+          id,
+          user_id,
+          token_hash,
+          expires_at,
+          remember_me,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        `,
+        [
+          sessionId,
+          user.id,
           sessionTokenHash,
-
-        rememberMe,
-
-        createdAt:
+          expiresAt,
+          rememberMe,
           now,
+        ]
+      );
 
-        expiresAt,
-      });
-
-      await users.updateOne(
-        {
-          _id:
-            user._id,
-        },
-        {
-          $set: {
-            lastLoginAt:
-              now,
-
-            updatedAt:
-              now,
-          },
-        }
+      await db.query(
+        `
+        UPDATE users
+        SET
+          last_login_at = ?,
+          updated_at = ?
+        WHERE id = ?
+        `,
+        [
+          now,
+          now,
+          user.id,
+        ]
       );
 
       res.cookie(
@@ -1058,7 +1293,7 @@ app.post(
           "Login successful.",
 
         userId:
-          user._id.toString(),
+          user.id,
 
         email:
           user.email,
@@ -1088,41 +1323,22 @@ app.get(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const users =
-        database.collection(
-          "users"
+      const [rows] =
+        await db.query(
+          `
+          SELECT
+            id,
+            email,
+            created_at,
+            last_login_at
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+          `,
+          [req.authUserId]
         );
 
-      if (
-        !ObjectId.isValid(
-          req.authUserId
-        )
-      ) {
-        return res.status(400).json({
-          message:
-            "Invalid authenticated user ID.",
-        });
-      }
-
-      const user =
-        await users.findOne(
-          {
-            _id:
-              new ObjectId(
-                req.authUserId
-              ),
-          },
-          {
-            projection: {
-              passwordHash: 0,
-              resetTokenHash: 0,
-              resetTokenExpiresAt: 0,
-            },
-          }
-        );
+      const user = rows[0];
 
       if (!user) {
         return res.status(404).json({
@@ -1133,16 +1349,16 @@ app.get(
 
       res.json({
         userId:
-          user._id.toString(),
+          user.id,
 
         email:
           user.email,
 
         createdAt:
-          user.createdAt,
+          user.created_at,
 
         lastLoginAt:
-          user.lastLoginAt ||
+          user.last_login_at ||
           null,
       });
     } catch (error) {
@@ -1183,14 +1399,13 @@ app.post(
             sessionToken
           );
 
-        await getDatabase()
-          .collection(
-            "sessions"
-          )
-          .deleteOne({
-            tokenHash:
-              sessionTokenHash,
-          });
+        await db.query(
+          `
+          DELETE FROM sessions
+          WHERE token_hash = ?
+          `,
+          [sessionTokenHash]
+        );
       }
 
       res.clearCookie(
@@ -1224,14 +1439,6 @@ app.post(
   "/forgot-password",
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const users =
-        database.collection(
-          "users"
-        );
-
       const email =
         normalizeEmail(
           req.body.email
@@ -1250,10 +1457,18 @@ app.post(
       const genericMessage =
         "If an account exists for this email, a password reset link has been sent.";
 
-      const user =
-        await users.findOne({
-          email,
-        });
+      const [userRows] =
+        await db.query(
+          `
+          SELECT id, email
+          FROM users
+          WHERE email = ?
+          LIMIT 1
+          `,
+          [email]
+        );
+
+      const user = userRows[0];
 
       if (!user) {
         return res.json({
@@ -1291,21 +1506,20 @@ app.post(
               1000
         );
 
-      await users.updateOne(
-        {
-          _id:
-            user._id,
-        },
-        {
-          $set: {
-            resetTokenHash,
-
-            resetTokenExpiresAt,
-
-            updatedAt:
-              new Date(),
-          },
-        }
+      await db.query(
+        `
+        UPDATE users
+        SET
+          reset_token_hash = ?,
+          reset_token_expires_at = ?,
+          updated_at = NOW()
+        WHERE id = ?
+        `,
+        [
+          resetTokenHash,
+          resetTokenExpiresAt,
+          user.id,
+        ]
       );
 
       const resetUrl =
@@ -1398,14 +1612,6 @@ app.post(
   "/reset-password",
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const users =
-        database.collection(
-          "users"
-        );
-
       const token =
         String(
           req.body.token || ""
@@ -1430,9 +1636,7 @@ app.post(
         });
       }
 
-      if (
-        newPassword.length < 8
-      ) {
+      if (newPassword.length < 8) {
         return res.status(400).json({
           message:
             "Password must be at least 8 characters.",
@@ -1442,14 +1646,19 @@ app.post(
       const resetTokenHash =
         hashResetToken(token);
 
-      const user =
-        await users.findOne({
-          resetTokenHash,
+      const [userRows] =
+        await db.query(
+          `
+          SELECT id
+          FROM users
+          WHERE reset_token_hash = ?
+            AND reset_token_expires_at > NOW()
+          LIMIT 1
+          `,
+          [resetTokenHash]
+        );
 
-          resetTokenExpiresAt: {
-            $gt: new Date(),
-          },
-        });
+      const user = userRows[0];
 
       if (!user) {
         return res.status(400).json({
@@ -1464,51 +1673,40 @@ app.post(
           12
         );
 
-      const result =
-        await users.updateOne(
-          {
-            _id:
-              user._id,
-
+      const [result] =
+        await db.query(
+          `
+          UPDATE users
+          SET
+            password_hash = ?,
+            reset_token_hash = NULL,
+            reset_token_expires_at = NULL,
+            updated_at = NOW()
+          WHERE id = ?
+            AND reset_token_hash = ?
+            AND reset_token_expires_at > NOW()
+          `,
+          [
+            passwordHash,
+            user.id,
             resetTokenHash,
-
-            resetTokenExpiresAt: {
-              $gt: new Date(),
-            },
-          },
-          {
-            $set: {
-              passwordHash,
-
-              updatedAt:
-                new Date(),
-            },
-
-            $unset: {
-              resetTokenHash:
-                "",
-
-              resetTokenExpiresAt:
-                "",
-            },
-          }
+          ]
         );
 
-      if (
-        result.modifiedCount !== 1
-      ) {
+      if (result.affectedRows !== 1) {
         return res.status(400).json({
           message:
             "This password reset link is invalid or has already been used.",
         });
       }
 
-      await getDatabase()
-        .collection("sessions")
-        .deleteMany({
-          userId:
-            user._id.toString(),
-        });
+      await db.query(
+        `
+        DELETE FROM sessions
+        WHERE user_id = ?
+        `,
+        [user.id]
+      );
 
       res.json({
         message:
@@ -1537,14 +1735,6 @@ app.get(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const users =
-        database.collection(
-          "users"
-        );
-
       const requestedUserId =
         normalizeUserId(
           req.params.userId
@@ -1560,33 +1750,29 @@ app.get(
         });
       }
 
-      if (
-        !ObjectId.isValid(
-          requestedUserId
-        )
-      ) {
+      if (!requestedUserId) {
         return res.status(400).json({
           message:
             "Invalid user ID.",
         });
       }
 
-      const user =
-        await users.findOne(
-          {
-            _id:
-              new ObjectId(
-                requestedUserId
-              ),
-          },
-          {
-            projection: {
-              passwordHash: 0,
-              resetTokenHash: 0,
-              resetTokenExpiresAt: 0,
-            },
-          }
+      const [rows] =
+        await db.query(
+          `
+          SELECT
+            id,
+            email,
+            created_at,
+            last_login_at
+          FROM users
+          WHERE id = ?
+          LIMIT 1
+          `,
+          [requestedUserId]
         );
+
+      const user = rows[0];
 
       if (!user) {
         return res.status(404).json({
@@ -1597,16 +1783,16 @@ app.get(
 
       res.json({
         userId:
-          user._id.toString(),
+          user.id,
 
         email:
           user.email,
 
         createdAt:
-          user.createdAt,
+          user.created_at,
 
         lastLoginAt:
-          user.lastLoginAt ||
+          user.last_login_at ||
           null,
       });
     } catch (error) {
@@ -1834,29 +2020,8 @@ app.post(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const patients =
-        database.collection(
-          "patients"
-        );
-
-      const digitalTwins =
-        database.collection(
-          "digitalTwins"
-        );
-
-      const foodGenomes =
-        database.collection(
-          "foodGenomes"
-        );
-
-      const patient =
-        req.body;
-
-      const userId =
-        req.authUserId;
+      const patient = req.body;
+      const userId = req.authUserId;
 
       if (!userId) {
         return res.status(401).json({
@@ -1878,151 +2043,275 @@ app.post(
       const cleanName =
         patient.name.trim();
 
-      const now =
-        new Date();
+      const patientId =
+        crypto.randomBytes(24).toString("hex");
 
-      const patientData = {
-        userId,
+      const now = new Date();
 
-        name:
-          cleanName,
+      const diseases =
+        patient.diseases || "";
 
-        age:
-          patient.age || "",
+      const allergies =
+        patient.allergies || "";
 
-        gender:
-          patient.gender || "",
+      const foodPreferences =
+        patient.foodPreferences || "";
 
-        height:
-          patient.height || "",
-
-        weight:
-          patient.weight || "",
-
-        bloodPressure:
-          patient.bloodPressure || "",
-
-        bloodSugar:
-          patient.bloodSugar || "",
-
-        diseases:
-          patient.diseases || "",
-
-        allergies:
-          patient.allergies || "",
-
-        foodPreferences:
-          patient.foodPreferences || "",
-
-        updatedAt:
-          now,
-      };
-
-      const existingPatient =
-        await patients.findOne({
-          userId,
-        });
-
-      let patientId;
-
-      if (existingPatient) {
-        await patients.updateOne(
-          {
-            _id:
-              existingPatient._id,
-          },
-          {
-            $set: {
-              ...patientData,
-
-              createdAt:
-                existingPatient.createdAt ||
-                now,
-            },
-          }
+      const [existingPatientRows] =
+        await db.query(
+          `
+          SELECT *
+          FROM patients
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
         );
 
-        patientId =
-          existingPatient._id;
+      const existingPatient =
+        existingPatientRows[0] || null;
+
+      let savedPatientId;
+
+      if (existingPatient) {
+        savedPatientId =
+          existingPatient.id;
+
+        await db.query(
+          `
+          UPDATE patients
+          SET
+            name = ?,
+            age = ?,
+            gender = ?,
+            height = ?,
+            weight = ?,
+            blood_pressure = ?,
+            blood_sugar = ?,
+            diseases = ?,
+            allergies = ?,
+            food_preferences = ?,
+            updated_at = ?
+          WHERE user_id = ?
+          `,
+          [
+            cleanName,
+            patient.age || null,
+            patient.gender || null,
+            patient.height || null,
+            patient.weight || null,
+            patient.bloodPressure || null,
+            patient.bloodSugar || null,
+            toJsonString(diseases),
+            toJsonString(allergies),
+            toJsonString(foodPreferences),
+            now,
+            userId,
+          ]
+        );
       } else {
-        const result =
-          await patients.insertOne({
-            ...patientData,
+        savedPatientId =
+          patientId;
 
-            createdAt:
-              now,
-          });
-
-        patientId =
-          result.insertedId;
+        await db.query(
+          `
+          INSERT INTO patients (
+            id,
+            user_id,
+            name,
+            age,
+            gender,
+            height,
+            weight,
+            blood_pressure,
+            blood_sugar,
+            diseases,
+            allergies,
+            food_preferences,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            savedPatientId,
+            userId,
+            cleanName,
+            patient.age || null,
+            patient.gender || null,
+            patient.height || null,
+            patient.weight || null,
+            patient.bloodPressure || null,
+            patient.bloodSugar || null,
+            toJsonString(diseases),
+            toJsonString(allergies),
+            toJsonString(foodPreferences),
+            now,
+            now,
+          ]
+        );
       }
 
-      await digitalTwins.updateOne(
-        {
-          userId,
-        },
-        {
-          $setOnInsert: {
+      // ------------------------------------------
+      // DIGITAL TWIN
+      // ------------------------------------------
+
+      const healthProfile = {
+        userId,
+        name: cleanName,
+        age: patient.age || "",
+        gender: patient.gender || "",
+        height: patient.height || "",
+        weight: patient.weight || "",
+        bloodPressure:
+          patient.bloodPressure || "",
+        bloodSugar:
+          patient.bloodSugar || "",
+        diseases,
+        allergies,
+        foodPreferences,
+        updatedAt: now,
+      };
+
+      const [digitalTwinRows] =
+        await db.query(
+          `
+          SELECT id
+          FROM digital_twins
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
+        );
+
+      if (digitalTwinRows.length > 0) {
+        await db.query(
+          `
+          UPDATE digital_twins
+          SET
+            patient_name = ?,
+            health_profile = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?
+          `,
+          [
+            cleanName,
+            toJsonString(
+              healthProfile
+            ),
             userId,
-
-            createdAt:
-              now,
-          },
-
-          $set: {
-            patientName:
-              cleanName,
-
-            healthProfile:
-              patientData,
-
-            updatedAt:
-              now,
-          },
-        },
-        {
-          upsert:
-            true,
-        }
-      );
-
-      await foodGenomes.updateOne(
-        {
-          userId,
-        },
-        {
-          $setOnInsert: {
+          ]
+        );
+      } else {
+        await db.query(
+          `
+          INSERT INTO digital_twins (
+            id,
+            user_id,
+            patient_name,
+            health_profile,
+            dietary_feedback,
+            feedback_count,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+          `,
+          [
+            crypto.randomBytes(24).toString("hex"),
             userId,
+            cleanName,
+            toJsonString(
+              healthProfile
+            ),
+            toJsonString([]),
+            now,
+            now,
+          ]
+        );
+      }
 
-            createdAt:
-              now,
-          },
+      // ------------------------------------------
+      // FOOD GENOME
+      // ------------------------------------------
 
-          $set: {
-            patientName:
-              cleanName,
+      const [foodGenomeRows] =
+        await db.query(
+          `
+          SELECT id
+          FROM food_genomes
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
+        );
 
-            updatedAt:
-              now,
-          },
-        },
-        {
-          upsert:
-            true,
-          }
-      );
+      if (foodGenomeRows.length === 0) {
+        await db.query(
+          `
+          INSERT INTO food_genomes (
+            id,
+            user_id,
+            total_feedback,
+            loved_foods,
+            liked_foods,
+            neutral_foods,
+            disliked_foods,
+            reactions,
+            foods,
+            meal_plan_feedback,
+            patient_name,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            crypto.randomBytes(24).toString("hex"),
+            userId,
+            toJsonString([]),
+            toJsonString([]),
+            toJsonString([]),
+            toJsonString([]),
+            toJsonString([]),
+            toJsonString([]),
+            toJsonString([]),
+            cleanName,
+            now,
+            now,
+          ]
+        );
+      }
 
       res.json({
         message:
           "Patient profile saved successfully.",
 
         patientId:
-          patientId.toString(),
+          savedPatientId.toString(),
 
         userId,
 
-        patient:
-          patientData,
+        patient: {
+          userId,
+          name: cleanName,
+          age:
+            patient.age || "",
+          gender:
+            patient.gender || "",
+          height:
+            patient.height || "",
+          weight:
+            patient.weight || "",
+          bloodPressure:
+            patient.bloodPressure || "",
+          bloodSugar:
+            patient.bloodSugar || "",
+          diseases,
+          allergies,
+          foodPreferences,
+          updatedAt: now,
+        },
       });
     } catch (error) {
       console.error(
@@ -2047,14 +2336,6 @@ app.get(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const patients =
-        database.collection(
-          "patients"
-        );
-
       if (
         normalizeUserId(
           req.params.userId
@@ -2067,11 +2348,19 @@ app.get(
         });
       }
 
+      const [rows] =
+        await db.query(
+          `
+          SELECT *
+          FROM patients
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [req.authUserId]
+        );
+
       const patient =
-        await patients.findOne({
-          userId:
-            req.authUserId,
-        });
+        rows[0];
 
       if (!patient) {
         return res.status(404).json({
@@ -2082,10 +2371,10 @@ app.get(
 
       res.json({
         userId:
-          patient.userId,
+          patient.user_id,
 
         patientId:
-          patient._id.toString(),
+          patient.id,
 
         name:
           patient.name,
@@ -2103,25 +2392,50 @@ app.get(
           patient.weight,
 
         bloodPressure:
-          patient.bloodPressure,
+          patient.blood_pressure,
 
         bloodSugar:
-          patient.bloodSugar,
+          patient.blood_sugar,
 
         diseases:
-          patient.diseases,
+          parseJsonValue(
+            patient.diseases
+          ),
 
         allergies:
-          patient.allergies || "",
+          parseJsonValue(
+            patient.allergies
+          ),
 
         foodPreferences:
-          patient.foodPreferences || "",
+          parseJsonValue(
+            patient.food_preferences
+          ),
+
+        medicalReportId:
+          patient.medical_report_id ||
+          null,
+
+        medicalReportAnalyzed:
+          Boolean(
+            patient.medical_report_analyzed
+          ),
+
+        medicalReportUpdatedAt:
+          patient.medical_report_updated_at ||
+          null,
+
+        medicalReportData:
+          parseJsonValue(
+            patient.medical_report_data,
+            null
+          ),
 
         createdAt:
-          patient.createdAt,
+          patient.created_at,
 
         updatedAt:
-          patient.updatedAt,
+          patient.updated_at,
       });
     } catch (error) {
       console.error(
@@ -2153,24 +2467,6 @@ app.post(
             "No medical report uploaded.",
         });
       }
-
-      const database =
-        getDatabase();
-
-      const reports =
-        database.collection(
-          "medicalReports"
-        );
-
-      const patients =
-        database.collection(
-          "patients"
-        );
-
-      const digitalTwins =
-        database.collection(
-          "digitalTwins"
-        );
 
       const userId =
         req.authUserId;
@@ -2452,10 +2748,19 @@ This is document extraction only, not medical diagnosis.
             : [],
       };
 
+      const [patientRows] =
+        await db.query(
+          `
+          SELECT id, name
+          FROM patients
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
+        );
+
       const patient =
-        await patients.findOne({
-          userId,
-        });
+        patientRows[0] || null;
 
       const patientName =
         patient?.name || "";
@@ -2463,104 +2768,189 @@ This is document extraction only, not medical diagnosis.
       const now =
         new Date();
 
-      const report = {
-        userId,
+      const reportId =
+        crypto.randomBytes(24).toString("hex");
 
-        patientName,
-
-        originalName:
+      // IMPORTANT:
+      // medical_reports has 30 columns here,
+      // so this VALUES list has exactly 30 placeholders.
+      await db.query(
+        `
+        INSERT INTO medical_reports (
+          id,
+          user_id,
+          patient_id,
+          patient_name,
+          original_name,
+          file_name,
+          file_path,
+          file_type,
+          conditions,
+          blood_pressure,
+          blood_sugar,
+          fasting_blood_sugar,
+          post_meal_blood_sugar,
+          hba1c,
+          cholesterol,
+          ldl,
+          hdl,
+          triglycerides,
+          hemoglobin,
+          thyroid_results,
+          kidney_findings,
+          liver_findings,
+          allergies,
+          dietary_restrictions,
+          medications,
+          other_relevant_findings,
+          extracted_data,
+          uploaded_at,
+          ai_analyzed,
+          ai_analyzed_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          reportId,
+          userId,
+          patient?.id || null,
+          patientName,
           req.file.originalname,
-
-        fileName:
-          req.file.filename,
-
-        filePath:
+          req.file.originalname,
           req.file.path,
-
-        fileType:
           req.file.mimetype,
-
-        uploadedAt:
+          toJsonString(
+            extractedData.conditions
+          ),
+          extractedData.bloodPressure,
+          extractedData.bloodSugar,
+          extractedData.fastingBloodSugar,
+          extractedData.postMealBloodSugar,
+          extractedData.hba1c,
+          extractedData.cholesterol,
+          extractedData.ldl,
+          extractedData.hdl,
+          extractedData.triglycerides,
+          extractedData.hemoglobin,
+          toJsonString(
+            extractedData.thyroidResults
+          ),
+          toJsonString(
+            extractedData.kidneyFindings
+          ),
+          toJsonString(
+            extractedData.liverFindings
+          ),
+          toJsonString(
+            extractedData.allergies
+          ),
+          toJsonString(
+            extractedData.dietaryRestrictions
+          ),
+          toJsonString(
+            extractedData.medications
+          ),
+          toJsonString(
+            extractedData.otherRelevantFindings
+          ),
+          toJsonString(
+            extractedData
+          ),
           now,
-
-        aiAnalyzed:
           true,
-
-        aiAnalyzedAt:
           now,
+        ]
+      );
 
-        extractedData,
-      };
+      await db.query(
+        `
+        UPDATE patients
+        SET
+          medical_report_id = ?,
+          medical_report_analyzed = TRUE,
+          medical_report_updated_at = ?,
+          medical_report_data = ?
+        WHERE user_id = ?
+        `,
+        [
+          reportId,
+          now,
+          toJsonString(
+            extractedData
+          ),
+          userId,
+        ]
+      );
 
-      const result =
-        await reports.insertOne(
-          report
+      const [digitalTwinRows] =
+        await db.query(
+          `
+          SELECT id
+          FROM digital_twins
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
         );
 
-      await patients.updateOne(
-        {
-          userId,
-        },
-        {
-          $set: {
-            medicalReportId:
-              result.insertedId.toString(),
-
-            medicalReportAnalyzed:
-              true,
-
-            medicalReportUpdatedAt:
-              now,
-
-            medicalReportData:
-              extractedData,
-
-            updatedAt:
-              now,
-          },
-        }
-      );
-
-      await digitalTwins.updateOne(
-        {
-          userId,
-        },
-        {
-          $setOnInsert: {
-            userId,
-
+      if (digitalTwinRows.length > 0) {
+        await db.query(
+          `
+          UPDATE digital_twins
+          SET
+            patient_name = ?,
+            medical_report_data = ?,
+            medical_report_analyzed = TRUE,
+            medical_report_updated_at = ?,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE user_id = ?
+          `,
+          [
             patientName,
-
-            createdAt:
-              now,
-          },
-
-          $set: {
-            medicalReportData:
-              extractedData,
-
-            medicalReportAnalyzed:
-              true,
-
-            medicalReportUpdatedAt:
-              now,
-
-            updatedAt:
-              now,
-          },
-        },
-        {
-          upsert:
-            true,
-        }
-      );
+            toJsonString(
+              extractedData
+            ),
+            now,
+            userId,
+          ]
+        );
+      } else {
+        await db.query(
+          `
+          INSERT INTO digital_twins (
+            id,
+            user_id,
+            patient_name,
+            medical_report_data,
+            medical_report_analyzed,
+            medical_report_updated_at,
+            dietary_feedback,
+            feedback_count,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, TRUE, ?, ?, 0, ?, ?)
+          `,
+          [
+            crypto.randomBytes(24).toString("hex"),
+            userId,
+            patientName,
+            toJsonString(
+              extractedData
+            ),
+            now,
+            toJsonString([]),
+            now,
+            now,
+          ]
+        );
+      }
 
       res.json({
         message:
           "Medical report uploaded and analyzed successfully.",
 
-        reportId:
-          result.insertedId.toString(),
+        reportId,
 
         userId,
 
@@ -2612,47 +3002,44 @@ app.post(
         });
       }
 
-      const database =
-        getDatabase();
-
-      const foodImages =
-        database.collection(
-          "foodImages"
-        );
-
       const userId =
         req.authUserId;
 
-      const foodImage = {
-        userId,
+      const foodImageId =
+        crypto.randomBytes(24).toString("hex");
 
-        originalName:
+      const now =
+        new Date();
+
+      await db.query(
+        `
+        INSERT INTO food_images (
+          id,
+          user_id,
+          original_name,
+          file_name,
+          file_path,
+          mime_type,
+          uploaded_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          foodImageId,
+          userId,
           req.file.originalname,
-
-        fileName:
           req.file.filename,
-
-        filePath:
           req.file.path,
-
-        fileType:
           req.file.mimetype,
-
-        uploadedAt:
-          new Date(),
-      };
-
-      const result =
-        await foodImages.insertOne(
-          foodImage
-        );
+          now,
+        ]
+      );
 
       res.json({
         message:
           "Food image uploaded successfully.",
 
-        foodImageId:
-          result.insertedId.toString(),
+        foodImageId,
       });
     } catch (error) {
       console.error(
@@ -2677,60 +3064,32 @@ app.post(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const foodHistory =
-        database.collection(
-          "foodHistory"
-        );
-
-      const foodGenomes =
-        database.collection(
-          "foodGenomes"
-        );
-
-      const digitalTwins =
-        database.collection(
-          "digitalTwins"
-        );
-
-      const mealPlans =
-        database.collection(
-          "mealPlans"
-        );
-
       const userId =
         req.authUserId;
 
       const patientName =
         String(
-          req.body.patientName ||
-            ""
+          req.body.patientName || ""
         ).trim();
 
       const foodName =
         String(
-          req.body.foodName ||
-            ""
+          req.body.foodName || ""
         ).trim();
 
       const status =
         String(
-          req.body.status ||
-            ""
+          req.body.status || ""
         ).trim();
 
       const reaction =
         String(
-          req.body.reaction ||
-            ""
+          req.body.reaction || ""
         ).trim();
 
       const notes =
         String(
-          req.body.notes ||
-            ""
+          req.body.notes || ""
         ).trim();
 
       const source =
@@ -2741,26 +3100,22 @@ app.post(
 
       const mealPlanId =
         String(
-          req.body.mealPlanId ||
-            ""
+          req.body.mealPlanId || ""
         ).trim();
 
       const goal =
         String(
-          req.body.goal ||
-            ""
+          req.body.goal || ""
         ).trim();
 
       const context =
         String(
-          req.body.context ||
-            ""
+          req.body.context || ""
         ).trim();
 
       const customization =
         String(
-          req.body.customization ||
-            ""
+          req.body.customization || ""
         ).trim();
 
       const isFoodFeedback =
@@ -2770,10 +3125,6 @@ app.post(
       const isMealPlanFeedback =
         source ===
         "meal-planner";
-
-      // ==================================================
-      // VALIDATION
-      // ==================================================
 
       if (
         isFoodFeedback &&
@@ -2792,18 +3143,6 @@ app.post(
         return res.status(400).json({
           message:
             "A saved meal plan ID is required for meal-plan feedback.",
-        });
-      }
-
-      if (
-        isMealPlanFeedback &&
-        !ObjectId.isValid(
-          mealPlanId
-        )
-      ) {
-        return res.status(400).json({
-          message:
-            "Invalid meal plan ID.",
         });
       }
 
@@ -2832,12 +3171,19 @@ app.post(
         });
       }
 
+      const [patientRows] =
+        await db.query(
+          `
+          SELECT name
+          FROM patients
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
+        );
+
       const patient =
-        await database
-          .collection("patients")
-          .findOne({
-            userId,
-          });
+        patientRows[0] || null;
 
       const resolvedPatientName =
         patient?.name ||
@@ -2846,25 +3192,29 @@ app.post(
       const now =
         new Date();
 
-      // ==================================================
-      // VERIFY EXACT MEAL PLAN
-      // ==================================================
-
       let savedMealPlan =
         null;
 
       if (
         isMealPlanFeedback
       ) {
-        savedMealPlan =
-          await mealPlans.findOne({
-            _id:
-              new ObjectId(
-                mealPlanId
-              ),
+        const [mealPlanRows] =
+          await db.query(
+            `
+            SELECT *
+            FROM meal_plans
+            WHERE id = ?
+              AND user_id = ?
+            LIMIT 1
+            `,
+            [
+              mealPlanId,
+              userId,
+            ]
+          );
 
-            userId,
-          });
+        savedMealPlan =
+          mealPlanRows[0] || null;
 
         if (!savedMealPlan) {
           return res.status(404).json({
@@ -2873,10 +3223,6 @@ app.post(
           });
         }
       }
-
-      // ==================================================
-      // FEEDBACK RECORD
-      // ==================================================
 
       const feedbackRecord = {
         userId,
@@ -2923,13 +3269,71 @@ app.post(
           "";
       }
 
-      const result =
-        await foodHistory.insertOne(
-          feedbackRecord
-        );
+      const foodHistoryId =
+        crypto
+          .randomBytes(24)
+          .toString("hex");
+
+      await db.query(
+        `
+        INSERT INTO food_history (
+          id,
+          user_id,
+          patient_name,
+          source,
+          food_name,
+          status,
+          reaction,
+          notes,
+          meal_plan_id,
+          goal,
+          context,
+          customization,
+          feedback_data,
+          recorded_at,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          foodHistoryId,
+          userId,
+          resolvedPatientName,
+          source,
+          isFoodFeedback
+            ? foodName
+            : "",
+          status,
+          reaction,
+          notes,
+          isMealPlanFeedback
+            ? mealPlanId
+            : null,
+          isMealPlanFeedback
+            ? savedMealPlan.goal ||
+              goal ||
+              ""
+            : goal,
+          isMealPlanFeedback
+            ? savedMealPlan.context ||
+              context ||
+              ""
+            : context,
+          isMealPlanFeedback
+            ? savedMealPlan.customization ||
+              customization ||
+              ""
+            : customization,
+          toJsonString(
+            feedbackRecord
+          ),
+          now,
+          now,
+        ]
+      );
 
       // ==================================================
-      // FOOD FEEDBACK
+      // FOOD GENOME
       // ==================================================
 
       if (
@@ -2950,100 +3354,167 @@ app.post(
             now,
         };
 
-        let preferenceField =
-          null;
+        const [genomeRows] =
+          await db.query(
+            `
+            SELECT *
+            FROM food_genomes
+            WHERE user_id = ?
+            LIMIT 1
+            `,
+            [userId]
+          );
 
-        if (status === "loved") {
-          preferenceField =
-            "lovedFoods";
-        } else if (
-          status === "liked"
-        ) {
-          preferenceField =
-            "likedFoods";
-        } else if (
-          status === "neutral"
-        ) {
-          preferenceField =
-            "neutralFoods";
-        } else if (
-          status === "disliked"
-        ) {
-          preferenceField =
-            "dislikedFoods";
-        }
+        const genome =
+          genomeRows[0] || null;
 
-        const genomeUpdate = {
-          $setOnInsert: {
-            userId,
+        const lovedFoods =
+          parseJsonValue(
+            genome?.loved_foods,
+            []
+          );
 
-            createdAt:
-              now,
-          },
+        const likedFoods =
+          parseJsonValue(
+            genome?.liked_foods,
+            []
+          );
 
-          $set: {
-            patientName:
-              resolvedPatientName,
+        const neutralFoods =
+          parseJsonValue(
+            genome?.neutral_foods,
+            []
+          );
 
-            updatedAt:
-              now,
+        const dislikedFoods =
+          parseJsonValue(
+            genome?.disliked_foods,
+            []
+          );
 
-            lastFeedback:
-              genomeFoodEntry,
-          },
+        const reactions =
+          parseJsonValue(
+            genome?.reactions,
+            []
+          );
 
-          $inc: {
-            totalFeedback:
-              1,
-          },
+        const foods =
+          parseJsonValue(
+            genome?.foods,
+            []
+          );
 
-          $push: {
-            foods:
-              genomeFoodEntry,
-          },
+        const currentPreferences = {
+          loved: lovedFoods,
+          liked: likedFoods,
+          neutral: neutralFoods,
+          disliked: dislikedFoods,
         };
 
-        if (
-          preferenceField
-        ) {
-          genomeUpdate.$push[
-            preferenceField
-          ] = {
-            foodName,
+        currentPreferences[
+          status
+        ].push({
+          foodName,
 
-            reaction,
+          reaction,
 
-            notes,
+          notes,
 
-            source,
+          source,
 
-            recordedAt:
-              now,
-          };
-        }
+          recordedAt:
+            now,
+        });
+
+        foods.push(
+          genomeFoodEntry
+        );
 
         if (reaction) {
-          genomeUpdate.$push.reactions = {
+          reactions.push({
             foodName,
 
             reaction,
 
             recordedAt:
               now,
-          };
+          });
         }
 
-        await foodGenomes.updateOne(
-          {
+        const genomeId =
+          genome?.id ||
+          crypto
+            .randomBytes(24)
+            .toString("hex");
+
+        await db.query(
+          `
+          INSERT INTO food_genomes (
+            id,
+            user_id,
+            total_feedback,
+            loved_foods,
+            liked_foods,
+            neutral_foods,
+            disliked_foods,
+            reactions,
+            foods,
+            meal_plan_feedback,
+            patient_name,
+            last_feedback,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            total_feedback = VALUES(total_feedback),
+            loved_foods = VALUES(loved_foods),
+            liked_foods = VALUES(liked_foods),
+            neutral_foods = VALUES(neutral_foods),
+            disliked_foods = VALUES(disliked_foods),
+            reactions = VALUES(reactions),
+            foods = VALUES(foods),
+            patient_name = VALUES(patient_name),
+            last_feedback = VALUES(last_feedback),
+            updated_at = CURRENT_TIMESTAMP
+          `,
+          [
+            genomeId,
             userId,
-          },
-
-          genomeUpdate,
-
-          {
-            upsert:
-              true,
-          }
+            (genome?.total_feedback || 0) +
+              1,
+            toJsonString(
+              currentPreferences.loved
+            ),
+            toJsonString(
+              currentPreferences.liked
+            ),
+            toJsonString(
+              currentPreferences.neutral
+            ),
+            toJsonString(
+              currentPreferences.disliked
+            ),
+            toJsonString(
+              reactions
+            ),
+            toJsonString(
+              foods
+            ),
+            toJsonString(
+              parseJsonValue(
+                genome?.meal_plan_feedback,
+                []
+              )
+            ),
+            resolvedPatientName,
+            toJsonString(
+              genomeFoodEntry
+            ),
+            genome?.created_at ||
+              now,
+            now,
+          ]
         );
       }
 
@@ -3051,10 +3522,8 @@ app.post(
       // MEAL PLAN FEEDBACK
       // ==================================================
 
-      if (
-        isMealPlanFeedback
-      ) {
-        const mealPlanFeedback = {
+      if (isMealPlanFeedback) {
+        const mealPlanFeedbackRecord = {
           mealPlanId,
 
           status,
@@ -3084,66 +3553,160 @@ app.post(
             now,
         };
 
-        await foodGenomes.updateOne(
-          {
-            userId,
-          },
+        const [genomeRows] =
+          await db.query(
+            `
+            SELECT *
+            FROM food_genomes
+            WHERE user_id = ?
+            LIMIT 1
+            `,
+            [userId]
+          );
 
-          {
-            $setOnInsert: {
-              userId,
+        const genome =
+          genomeRows[0] || null;
 
-              createdAt:
-                now,
-            },
+        const existingMealPlanFeedback =
+          parseJsonValue(
+            genome?.meal_plan_feedback,
+            []
+          );
 
-            $set: {
-              patientName:
-                resolvedPatientName,
-
-              updatedAt:
-                now,
-
-              lastMealPlanFeedback:
-                mealPlanFeedback,
-            },
-
-            $push: {
-              mealPlanFeedback:
-                mealPlanFeedback,
-            },
-          },
-
-          {
-            upsert:
-              true,
-          }
+        existingMealPlanFeedback.push(
+          mealPlanFeedbackRecord
         );
 
-        await mealPlans.updateOne(
-          {
-            _id:
-              new ObjectId(
-                mealPlanId
-              ),
+        const genomeId =
+          genome?.id ||
+          crypto
+            .randomBytes(24)
+            .toString("hex");
+
+        await db.query(
+          `
+          INSERT INTO food_genomes (
+            id,
+            user_id,
+            total_feedback,
+            loved_foods,
+            liked_foods,
+            neutral_foods,
+            disliked_foods,
+            reactions,
+            foods,
+            meal_plan_feedback,
+            patient_name,
+            last_meal_plan_feedback,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON DUPLICATE KEY UPDATE
+            meal_plan_feedback = VALUES(meal_plan_feedback),
+            patient_name = VALUES(patient_name),
+            last_meal_plan_feedback = VALUES(last_meal_plan_feedback),
+            updated_at = CURRENT_TIMESTAMP
+          `,
+          [
+            genomeId,
+            userId,
+            genome?.total_feedback || 0,
+
+            toJsonString(
+              parseJsonValue(
+                genome?.loved_foods,
+                []
+              )
+            ),
+
+            toJsonString(
+              parseJsonValue(
+                genome?.liked_foods,
+                []
+              )
+            ),
+
+            toJsonString(
+              parseJsonValue(
+                genome?.neutral_foods,
+                []
+              )
+            ),
+
+            toJsonString(
+              parseJsonValue(
+                genome?.disliked_foods,
+                []
+              )
+            ),
+
+            toJsonString(
+              parseJsonValue(
+                genome?.reactions,
+                []
+              )
+            ),
+
+            toJsonString(
+              parseJsonValue(
+                genome?.foods,
+                []
+              )
+            ),
+
+            toJsonString(
+              existingMealPlanFeedback
+            ),
+
+            resolvedPatientName,
+
+            toJsonString(
+              mealPlanFeedbackRecord
+            ),
+
+            genome?.created_at ||
+              now,
+
+            now,
+          ]
+        );
+
+        const existingFeedbackHistory =
+          parseJsonValue(
+            savedMealPlan.feedback_history,
+            []
+          );
+
+        existingFeedbackHistory.push(
+          mealPlanFeedbackRecord
+        );
+
+        await db.query(
+          `
+          UPDATE meal_plans
+          SET
+            latest_feedback = ?,
+            feedback_history = ?,
+            updated_at = ?
+          WHERE id = ?
+            AND user_id = ?
+          `,
+          [
+            toJsonString(
+              mealPlanFeedbackRecord
+            ),
+
+            toJsonString(
+              existingFeedbackHistory
+            ),
+
+            now,
+
+            mealPlanId,
 
             userId,
-          },
-
-          {
-            $set: {
-              latestFeedback:
-                mealPlanFeedback,
-
-              updatedAt:
-                now,
-            },
-
-            $push: {
-              feedbackHistory:
-                mealPlanFeedback,
-            },
-          }
+          ]
         );
       }
 
@@ -3191,45 +3754,92 @@ app.post(
           "";
       }
 
-      await digitalTwins.updateOne(
-        {
+      const [twinRows] =
+        await db.query(
+          `
+          SELECT *
+          FROM digital_twins
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
+        );
+
+      const twin =
+        twinRows[0] || null;
+
+      const dietaryFeedback =
+        parseJsonValue(
+          twin?.dietary_feedback,
+          []
+        );
+
+      dietaryFeedback.push(
+        twinFeedback
+      );
+
+      const twinId =
+        twin?.id ||
+        crypto
+          .randomBytes(24)
+          .toString("hex");
+
+      await db.query(
+        `
+        INSERT INTO digital_twins (
+          id,
+          user_id,
+          patient_name,
+          health_profile,
+          medical_report_data,
+          medical_report_analyzed,
+          medical_report_updated_at,
+          dietary_feedback,
+          feedback_count,
+          last_dietary_feedback,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          patient_name = VALUES(patient_name),
+          dietary_feedback = VALUES(dietary_feedback),
+          feedback_count = VALUES(feedback_count),
+          last_dietary_feedback = VALUES(last_dietary_feedback),
+          updated_at = CURRENT_TIMESTAMP
+        `,
+        [
+          twinId,
           userId,
-        },
-
-        {
-          $setOnInsert: {
-            userId,
-
-            createdAt:
-              now,
-          },
-
-          $set: {
-            patientName:
-              resolvedPatientName,
-
-            updatedAt:
-              now,
-
-            lastDietaryFeedback:
-              twinFeedback,
-          },
-
-          $inc: {
-            feedbackCount:
-              1,
-          },
-
-          $push: {
-            dietaryFeedback:
-              twinFeedback,
-          },
-        },
-
-        {
-          upsert:
-            true,
-        }
+          resolvedPatientName,
+          toJsonString(
+            parseJsonValue(
+              twin?.health_profile,
+              null
+            )
+          ),
+          toJsonString(
+            parseJsonValue(
+              twin?.medical_report_data,
+              null
+            )
+          ),
+          twin?.medical_report_analyzed ||
+            false,
+          twin?.medical_report_updated_at ||
+            null,
+          toJsonString(
+            dietaryFeedback
+          ),
+          (twin?.feedback_count || 0) +
+            1,
+          toJsonString(
+            twinFeedback
+          ),
+          twin?.created_at ||
+            now,
+          now,
+        ]
       );
 
       res.json({
@@ -3237,7 +3847,7 @@ app.post(
           "Feedback saved and personalization data updated successfully.",
 
         foodHistoryId:
-          result.insertedId.toString(),
+          foodHistoryId,
 
         mealPlanId:
           isMealPlanFeedback
@@ -3283,21 +3893,19 @@ app.get(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const foodGenomes =
-        database.collection(
-          "foodGenomes"
+      const [patientRows] =
+        await db.query(
+          `
+          SELECT name
+          FROM patients
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [req.authUserId]
         );
 
       const patient =
-        await database
-          .collection("patients")
-          .findOne({
-            userId:
-              req.authUserId,
-          });
+        patientRows[0] || null;
 
       if (
         patient &&
@@ -3310,11 +3918,19 @@ app.get(
         });
       }
 
+      const [genomeRows] =
+        await db.query(
+          `
+          SELECT *
+          FROM food_genomes
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [req.authUserId]
+        );
+
       const genome =
-        await foodGenomes.findOne({
-          userId:
-            req.authUserId,
-        });
+        genomeRows[0] || null;
 
       if (!genome) {
         return res.json({
@@ -3343,7 +3959,78 @@ app.get(
         });
       }
 
-      res.json(genome);
+      res.json({
+        userId:
+          genome.user_id,
+
+        patientName:
+          genome.patient_name ||
+          patient?.name ||
+          req.params.patientName,
+
+        totalFeedback:
+          genome.total_feedback || 0,
+
+        lovedFoods:
+          parseJsonValue(
+            genome.loved_foods,
+            []
+          ),
+
+        likedFoods:
+          parseJsonValue(
+            genome.liked_foods,
+            []
+          ),
+
+        neutralFoods:
+          parseJsonValue(
+            genome.neutral_foods,
+            []
+          ),
+
+        dislikedFoods:
+          parseJsonValue(
+            genome.disliked_foods,
+            []
+          ),
+
+        reactions:
+          parseJsonValue(
+            genome.reactions,
+            []
+          ),
+
+        foods:
+          parseJsonValue(
+            genome.foods,
+            []
+          ),
+
+        mealPlanFeedback:
+          parseJsonValue(
+            genome.meal_plan_feedback,
+            []
+          ),
+
+        lastFeedback:
+          parseJsonValue(
+            genome.last_feedback,
+            null
+          ),
+
+        lastMealPlanFeedback:
+          parseJsonValue(
+            genome.last_meal_plan_feedback,
+            null
+          ),
+
+        createdAt:
+          genome.created_at,
+
+        updatedAt:
+          genome.updated_at,
+      });
     } catch (error) {
       console.error(
         "Food Genome retrieval error:",
@@ -3367,14 +4054,6 @@ app.get(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const foodGenomes =
-        database.collection(
-          "foodGenomes"
-        );
-
       if (
         normalizeUserId(
           req.params.userId
@@ -3390,10 +4069,19 @@ app.get(
       const userId =
         req.authUserId;
 
+      const [rows] =
+        await db.query(
+          `
+          SELECT *
+          FROM food_genomes
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
+        );
+
       const genome =
-        await foodGenomes.findOne({
-          userId,
-        });
+        rows[0] || null;
 
       if (!genome) {
         return res.json({
@@ -3417,7 +4105,77 @@ app.get(
         });
       }
 
-      res.json(genome);
+      res.json({
+        userId:
+          genome.user_id,
+
+        patientName:
+          genome.patient_name ||
+          "",
+
+        totalFeedback:
+          genome.total_feedback || 0,
+
+        lovedFoods:
+          parseJsonValue(
+            genome.loved_foods,
+            []
+          ),
+
+        likedFoods:
+          parseJsonValue(
+            genome.liked_foods,
+            []
+          ),
+
+        neutralFoods:
+          parseJsonValue(
+            genome.neutral_foods,
+            []
+          ),
+
+        dislikedFoods:
+          parseJsonValue(
+            genome.disliked_foods,
+            []
+          ),
+
+        reactions:
+          parseJsonValue(
+            genome.reactions,
+            []
+          ),
+
+        foods:
+          parseJsonValue(
+            genome.foods,
+            []
+          ),
+
+        mealPlanFeedback:
+          parseJsonValue(
+            genome.meal_plan_feedback,
+            []
+          ),
+
+        lastFeedback:
+          parseJsonValue(
+            genome.last_feedback,
+            null
+          ),
+
+        lastMealPlanFeedback:
+          parseJsonValue(
+            genome.last_meal_plan_feedback,
+            null
+          ),
+
+        createdAt:
+          genome.created_at,
+
+        updatedAt:
+          genome.updated_at,
+      });
     } catch (error) {
       console.error(
         "Food Genome user retrieval error:",
@@ -3456,23 +4214,62 @@ app.get(
         });
       }
 
-      const mealPlans =
-        getDatabase().collection(
-          "mealPlans"
+      const [rows] =
+        await db.query(
+          `
+          SELECT *
+          FROM meal_plans
+          WHERE user_id = ?
+          ORDER BY updated_at DESC
+          LIMIT 20
+          `,
+          [req.authUserId]
         );
 
       const plans =
-        await mealPlans
-          .find({
-            userId:
-              req.authUserId,
-          })
-          .sort({
-            updatedAt:
-              -1,
-          })
-          .limit(20)
-          .toArray();
+        rows.map((plan) => ({
+          id:
+            plan.id,
+
+          userId:
+            plan.user_id,
+
+          patientName:
+            plan.patient_name,
+
+          goal:
+            plan.goal,
+
+          context:
+            plan.context,
+
+          customization:
+            plan.customization,
+
+          mealPlan:
+            parseJsonValue(
+              plan.meal_plan,
+              ""
+            ),
+
+          latestFeedback:
+            parseJsonValue(
+              plan.latest_feedback,
+              null
+            ),
+
+          feedbackHistory:
+            parseJsonValue(
+              plan.feedback_history,
+              []
+            ),
+
+          createdAt:
+            plan.created_at,
+
+          updatedAt:
+            plan.updated_at,
+        }));
 
       res.json({
         mealPlans:
@@ -3504,32 +4301,23 @@ app.get(
       const mealPlanId =
         req.params.mealPlanId;
 
-      if (
-        !ObjectId.isValid(
-          mealPlanId
-        )
-      ) {
-        return res.status(400).json({
-          message:
-            "Invalid meal plan ID.",
-        });
-      }
-
-      const mealPlans =
-        getDatabase().collection(
-          "mealPlans"
+      const [rows] =
+        await db.query(
+          `
+          SELECT *
+          FROM meal_plans
+          WHERE id = ?
+            AND user_id = ?
+          LIMIT 1
+          `,
+          [
+            mealPlanId,
+            req.authUserId,
+          ]
         );
 
       const plan =
-        await mealPlans.findOne({
-          _id:
-            new ObjectId(
-              mealPlanId
-            ),
-
-          userId:
-            req.authUserId,
-        });
+        rows[0] || null;
 
       if (!plan) {
         return res.status(404).json({
@@ -3539,8 +4327,49 @@ app.get(
       }
 
       res.json({
-        mealPlan:
-          plan,
+        mealPlan: {
+          id:
+            plan.id,
+
+          userId:
+            plan.user_id,
+
+          patientName:
+            plan.patient_name,
+
+          goal:
+            plan.goal,
+
+          context:
+            plan.context,
+
+          customization:
+            plan.customization,
+
+          mealPlan:
+            parseJsonValue(
+              plan.meal_plan,
+              ""
+            ),
+
+          latestFeedback:
+            parseJsonValue(
+              plan.latest_feedback,
+              null
+            ),
+
+          feedbackHistory:
+            parseJsonValue(
+              plan.feedback_history,
+              []
+            ),
+
+          createdAt:
+            plan.created_at,
+
+          updatedAt:
+            plan.updated_at,
+        },
       });
     } catch (error) {
       console.error(
@@ -3565,21 +4394,19 @@ app.get(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const digitalTwins =
-        database.collection(
-          "digitalTwins"
+      const [patientRows] =
+        await db.query(
+          `
+          SELECT name
+          FROM patients
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [req.authUserId]
         );
 
       const patient =
-        await database
-          .collection("patients")
-          .findOne({
-            userId:
-              req.authUserId,
-          });
+        patientRows[0] || null;
 
       if (
         patient &&
@@ -3592,11 +4419,19 @@ app.get(
         });
       }
 
+      const [twinRows] =
+        await db.query(
+          `
+          SELECT *
+          FROM digital_twins
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [req.authUserId]
+        );
+
       const twin =
-        await digitalTwins.findOne({
-          userId:
-            req.authUserId,
-        });
+        twinRows[0] || null;
 
       if (!twin) {
         return res.json({
@@ -3611,11 +4446,68 @@ app.get(
 
           healthProfile: null,
 
+          medicalReportData: null,
+
+          medicalReportAnalyzed: false,
+
+          medicalReportUpdatedAt: null,
+
           dietaryFeedback: [],
+
+          lastDietaryFeedback: null,
         });
       }
 
-      res.json(twin);
+      res.json({
+        userId:
+          twin.user_id,
+
+        patientName:
+          twin.patient_name ||
+          patient?.name ||
+          req.params.patientName,
+
+        feedbackCount:
+          twin.feedback_count || 0,
+
+        healthProfile:
+          parseJsonValue(
+            twin.health_profile,
+            null
+          ),
+
+        medicalReportData:
+          parseJsonValue(
+            twin.medical_report_data,
+            null
+          ),
+
+        medicalReportAnalyzed:
+          Boolean(
+            twin.medical_report_analyzed
+          ),
+
+        medicalReportUpdatedAt:
+          twin.medical_report_updated_at,
+
+        dietaryFeedback:
+          parseJsonValue(
+            twin.dietary_feedback,
+            []
+          ),
+
+        lastDietaryFeedback:
+          parseJsonValue(
+            twin.last_dietary_feedback,
+            null
+          ),
+
+        createdAt:
+          twin.created_at,
+
+        updatedAt:
+          twin.updated_at,
+      });
     } catch (error) {
       console.error(
         "Digital Twin retrieval error:",
@@ -3639,14 +4531,6 @@ app.get(
   requireAuth,
   async (req, res) => {
     try {
-      const database =
-        getDatabase();
-
-      const digitalTwins =
-        database.collection(
-          "digitalTwins"
-        );
-
       if (
         normalizeUserId(
           req.params.userId
@@ -3662,10 +4546,19 @@ app.get(
       const userId =
         req.authUserId;
 
+      const [rows] =
+        await db.query(
+          `
+          SELECT *
+          FROM digital_twins
+          WHERE user_id = ?
+          LIMIT 1
+          `,
+          [userId]
+        );
+
       const twin =
-        await digitalTwins.findOne({
-          userId,
-        });
+        rows[0] || null;
 
       if (!twin) {
         return res.json({
@@ -3675,11 +4568,67 @@ app.get(
 
           healthProfile: null,
 
+          medicalReportData: null,
+
+          medicalReportAnalyzed: false,
+
+          medicalReportUpdatedAt: null,
+
           dietaryFeedback: [],
+
+          lastDietaryFeedback: null,
         });
       }
 
-      res.json(twin);
+      res.json({
+        userId:
+          twin.user_id,
+
+        patientName:
+          twin.patient_name ||
+          "",
+
+        feedbackCount:
+          twin.feedback_count || 0,
+
+        healthProfile:
+          parseJsonValue(
+            twin.health_profile,
+            null
+          ),
+
+        medicalReportData:
+          parseJsonValue(
+            twin.medical_report_data,
+            null
+          ),
+
+        medicalReportAnalyzed:
+          Boolean(
+            twin.medical_report_analyzed
+          ),
+
+        medicalReportUpdatedAt:
+          twin.medical_report_updated_at,
+
+        dietaryFeedback:
+          parseJsonValue(
+            twin.dietary_feedback,
+            []
+          ),
+
+        lastDietaryFeedback:
+          parseJsonValue(
+            twin.last_dietary_feedback,
+            null
+          ),
+
+        createdAt:
+          twin.created_at,
+
+        updatedAt:
+          twin.updated_at,
+      });
     } catch (error) {
       console.error(
         "Digital Twin user retrieval error:",
@@ -3750,40 +4699,78 @@ app.post(
         null;
 
       if (mealPlanId) {
-        if (
-          !ObjectId.isValid(
-            mealPlanId
-          )
-        ) {
-          return res.status(400).json({
-            message:
-              "Invalid meal plan ID.",
-          });
-        }
+        const [mealPlanRows] =
+          await db.query(
+            `
+            SELECT *
+            FROM meal_plans
+            WHERE id = ?
+              AND user_id = ?
+            LIMIT 1
+            `,
+            [
+              mealPlanId,
+              cleanUserId,
+            ]
+          );
 
-        currentSavedMealPlan =
-          await getDatabase()
-            .collection(
-              "mealPlans"
-            )
-            .findOne({
-              _id:
-                new ObjectId(
-                  mealPlanId
-                ),
+        const savedPlan =
+          mealPlanRows[0] || null;
 
-              userId:
-                cleanUserId,
-            });
-
-        if (
-          !currentSavedMealPlan
-        ) {
+        if (!savedPlan) {
           return res.status(404).json({
             message:
               "The saved meal plan could not be found.",
           });
         }
+
+        currentSavedMealPlan = {
+          id:
+            savedPlan.id,
+
+          userId:
+            savedPlan.user_id,
+
+          patientName:
+            savedPlan.patient_name ||
+            "",
+
+          goal:
+            savedPlan.goal ||
+            "",
+
+          context:
+            savedPlan.context ||
+            "",
+
+          customization:
+            savedPlan.customization ||
+            "",
+
+          mealPlan:
+            parseJsonValue(
+              savedPlan.meal_plan,
+              ""
+            ),
+
+          latestFeedback:
+            parseJsonValue(
+              savedPlan.latest_feedback,
+              null
+            ),
+
+          feedbackHistory:
+            parseJsonValue(
+              savedPlan.feedback_history,
+              []
+            ),
+
+          createdAt:
+            savedPlan.created_at,
+
+          updatedAt:
+            savedPlan.updated_at,
+        };
       }
 
       // ==================================================
@@ -3889,6 +4876,10 @@ ${
 }
 `
           : "There is no currently saved meal plan being customized.";
+
+      // ==================================================
+      // GEMINI PROMPT
+      // ==================================================
 
       const prompt = `
 You are an AI personalized dietary planning assistant.
@@ -4004,21 +4995,8 @@ LIKE DOES NOT AUTOMATICALLY MEAN SUITABLE.
 A food can be loved or liked while also having negative
 personal reactions.
 
-Example:
-
-Pizza:
-- Preference: loved
-- Previous reaction: acidity, bloating
-
-Correct reasoning:
-
-The user enjoys pizza, but previous personal experience
-shows unwanted reactions.
-
-Therefore pizza should NOT automatically be prioritized
-because the user likes it.
-
 Consider:
+
 - portion size
 - preparation
 - frequency
@@ -4195,11 +5173,6 @@ for professional medical advice.
       const generatedMealPlan =
         response.text || "";
 
-      const mealPlans =
-        getDatabase().collection(
-          "mealPlans"
-        );
-
       const now =
         new Date();
 
@@ -4213,73 +5186,97 @@ for professional medical advice.
       if (
         currentSavedMealPlan
       ) {
-        const previousVersion = {
-          mealPlan:
-            currentSavedMealPlan.mealPlan ||
-            "",
+        // Store the previous version before replacing
+        // the current plan.
+        //
+        // IMPORTANT:
+        // The actual meal_plan_versions table uses
+        // saved_at, not created_at.
+        await db.query(
+          `
+          INSERT INTO meal_plan_versions (
+            id,
+            meal_plan_id,
+            user_id,
+            meal_plan,
+            goal,
+            context,
+            customization,
+            saved_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            crypto
+              .randomBytes(24)
+              .toString("hex"),
 
-          goal:
+            currentSavedMealPlan.id,
+
+            cleanUserId,
+
+            toJsonString(
+              currentSavedMealPlan.mealPlan ||
+                ""
+            ),
+
             currentSavedMealPlan.goal ||
-            "",
+              "",
 
-          context:
             currentSavedMealPlan.context ||
-            "",
+              "",
 
-          customization:
             currentSavedMealPlan.customization ||
-            "",
+              "",
 
-          savedAt:
             currentSavedMealPlan.updatedAt ||
-            currentSavedMealPlan.createdAt ||
+              currentSavedMealPlan.createdAt ||
+              now,
+          ]
+        );
+
+        await db.query(
+          `
+          UPDATE meal_plans
+          SET
+            patient_name = ?,
+            goal = ?,
+            context = ?,
+            customization = ?,
+            meal_plan = ?,
+            updated_at = ?
+          WHERE id = ?
+            AND user_id = ?
+          `,
+          [
+            patient.name || "",
+
+            goal,
+
+            String(
+              context || ""
+            ).trim(),
+
+            String(
+              customization || ""
+            ).trim(),
+
+            // meal_plan is a JSON column.
+            // Store the generated text as a JSON string.
+            toJsonString(
+              generatedMealPlan
+            ),
+
             now,
-        };
 
-        await mealPlans.updateOne(
-          {
-            _id:
-              currentSavedMealPlan._id,
+            currentSavedMealPlan.id,
 
-            userId:
-              cleanUserId,
-          },
-
-          {
-            $set: {
-              patientName:
-                patient.name ||
-                "",
-
-              goal,
-
-              context:
-                String(
-                  context || ""
-                ).trim(),
-
-              customization:
-                String(
-                  customization ||
-                    ""
-                ).trim(),
-
-              mealPlan:
-                generatedMealPlan,
-
-              updatedAt:
-                now,
-            },
-
-            $push: {
-              versions:
-                previousVersion,
-            },
-          }
+            cleanUserId,
+          ]
         );
 
         savedMealPlanId =
-          currentSavedMealPlan._id.toString();
+          currentSavedMealPlan.id;
       }
 
       // ==================================================
@@ -4287,50 +5284,59 @@ for professional medical advice.
       // ==================================================
 
       if (!savedMealPlanId) {
-        const newMealPlan = {
-          userId:
+        savedMealPlanId =
+          crypto
+            .randomBytes(24)
+            .toString("hex");
+
+        await db.query(
+          `
+          INSERT INTO meal_plans (
+            id,
+            user_id,
+            patient_name,
+            goal,
+            context,
+            customization,
+            meal_plan,
+            latest_feedback,
+            feedback_history,
+            created_at,
+            updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          [
+            savedMealPlanId,
+
             cleanUserId,
 
-          patientName:
-            patient.name ||
-            "",
+            patient.name || "",
 
-          goal,
+            goal,
 
-          context:
             String(
               context || ""
             ).trim(),
 
-          customization:
             String(
-              customization ||
-                ""
+              customization || ""
             ).trim(),
 
-          mealPlan:
-            generatedMealPlan,
+            // meal_plan is a JSON column.
+            toJsonString(
+              generatedMealPlan
+            ),
 
-          createdAt:
+            null,
+
+            toJsonString([]),
+
             now,
 
-          updatedAt:
             now,
-
-          versions:
-            [],
-
-          feedbackHistory:
-            [],
-        };
-
-        const result =
-          await mealPlans.insertOne(
-            newMealPlan
-          );
-
-        savedMealPlanId =
-          result.insertedId.toString();
+          ]
+        );
       }
 
       console.log(
@@ -4526,20 +5532,8 @@ LIKE DOES NOT AUTOMATICALLY MEAN SUITABLE.
 A user can enjoy a food while also experiencing an unwanted
 physical reaction.
 
-Example:
-
-Pizza:
-Preference = liked/loved
-Previous reactions = acidity, bloating
-
-Correct reasoning:
-
-- The user likes pizza.
-- The user has previously reported acidity and bloating.
-- Therefore liking pizza does NOT automatically make pizza
-  suitable.
-- The previous reaction must be included in the assessment.
-- Provide appropriate caution and an alternative when relevant.
+Previous reactions should be considered separately from
+food preferences.
 
 ==================================================
 PREVIOUS FOOD EXPERIENCE
@@ -4668,12 +5662,6 @@ Give practical guidance.
 Explicitly mention previous experiences with this food when
 available.
 
-For example:
-
-"You previously reported acidity and bloating after pizza,
-so although you like pizza, your Food Genome has learned that
-you may want to approach it with caution."
-
 Do not invent this statement unless those reactions are actually
 present in the stored data.
 
@@ -4737,13 +5725,12 @@ const server =
       );
 
       console.log(
-        `Authentication: MongoDB HTTP-only sessions`
+        `Authentication: MySQL HTTP-only sessions`
       );
 
       await connectToDatabase();
     }
   );
-
 server.on(
   "error",
   (error) => {
